@@ -1,17 +1,16 @@
 import { defineConfig } from "vite";
-import alias from "@rollup/plugin-alias";
 import vue from "@vitejs/plugin-vue";
-import { resolve } from "path";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const rootDir = resolve(__dirname);
+const rootDir = resolve(fileURLToPath(import.meta.url), "..");
 
-// https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [vue(), alias()],
-  resolve: {
-    alias: {
-      "@src": resolve(rootDir, "src"),
-      "@custom_types": resolve(rootDir, "src/@custom_types"),
-    },
-  },
+	plugins: [vue()],
+	resolve: {
+		alias: {
+			"@src": resolve(rootDir, "src"),
+			"@custom_types": resolve(rootDir, "src/@custom_types"),
+		},
+	},
 });
