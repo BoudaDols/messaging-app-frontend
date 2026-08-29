@@ -1,12 +1,25 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import { useRouter } from "vue-router";
 
 import Button from "@src/components/ui/inputs/Button.vue";
 import LabeledTextInput from "@src/components/ui/inputs/LabeledTextInput.vue";
 import PasswordInput from "@src/components/ui/inputs/PasswordInput.vue";
 import { RouterLink } from "vue-router";
+import useAuthStore from "@src/store/auth";
 
+const router = useRouter();
+const authStore = useAuthStore();
+
+const email = ref("");
 const password = ref("");
+
+const handleLogin = async () => {
+  const success = await authStore.login(email.value, password.value);
+  if (success) {
+    router.push("/chat/");
+  }
+};
 </script>
 
 <template>
@@ -25,8 +38,13 @@ const password = ref("");
           Welcome back
         </p>
         <p class="body-3 text-black/75 dark:text-white/70 font-light">
-          Create an account a start messaging now!
+          Sign in to start messaging now!
         </p>
+      </div>
+
+      <!--error message-->
+      <div v-if="authStore.error" class="mb-4">
+        <p class="body-2 text-red-500">{{ authStore.error }}</p>
       </div>
 
       <!--form-->
@@ -35,13 +53,11 @@ const password = ref("");
           label="Email"
           placeholder="Enter your email"
           class="mb-5"
+          @value-changed="(value) => { email = value; }"
+          :value="email"
         />
         <PasswordInput
-          @value-changed="
-            (value) => {
-              password = value;
-            }
-          "
+          @value-changed="(value) => { password = value; }"
           :value="password"
           label="Password"
           placeholder="Enter your password"
@@ -51,49 +67,25 @@ const password = ref("");
       <!--local controls-->
       <div class="mb-6">
         <Button
+          @click="handleLogin"
           class="contained-primary contained-text w-full mb-4"
-          link
-          to="/chat/no-chat/"
-          >Sign in</Button
+          :disabled="authStore.loading"
         >
-      </div>
-
-      <!--divider-->
-      <div class="mb-6 flex items-center">
-        <span
-          class="w-full border border-dashed border-gray-100 dark:border-gray-600 rounded-[.0625rem]"
-        ></span>
-        <p class="body-3 text-black/75 dark:text-white/70 px-4 font-light">
-          or
-        </p>
-        <span
-          class="w-full border border-dashed border-gray-100 dark:border-gray-600 rounded-[.0625rem]"
-        ></span>
-      </div>
-
-      <!--oauth controls-->
-      <div>
-        <Button class="outlined-primary outlined-text w-full mb-5">
-          <img
-            src="@src/assets/vectors/google-logo.svg"
-            class="mr-3"
-            alt="google logo"
-          />
-          Sign in with google
+          {{ authStore.loading ? "Signing in..." : "Sign in" }}
         </Button>
+      </div>
 
-        <!--bottom text-->
-        <div class="flex justify-center">
-          <p class="body-2 text-black/70 dark:text-white/70">
-            Don’t have an account?
-            <RouterLink
-              to="/access/sign-up/"
-              class="text-indigo-400 opacity-100"
-            >
-              Sign up
-            </RouterLink>
-          </p>
-        </div>
+      <!--bottom text-->
+      <div class="flex justify-center">
+        <p class="body-2 text-black/70 dark:text-white/70">
+          Don't have an account?
+          <RouterLink
+            to="/access/sign-up/"
+            class="text-indigo-400 opacity-100"
+          >
+            Sign up
+          </RouterLink>
+        </p>
       </div>
     </div>
   </div>
