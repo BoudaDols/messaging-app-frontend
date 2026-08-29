@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { onMounted } from "vue";
 import useStore from "@src/store/store";
+import useChatStore from "@src/store/chat";
 
 import FadeTransition from "@src/components/ui/transitions/FadeTransition.vue";
 import Navigation from "@src/components/views/HomeView/Navigation/Navigation.vue";
@@ -7,6 +9,12 @@ import Sidebar from "@src/components/views/HomeView/Sidebar/Sidebar.vue";
 import { getActiveConversationId } from "@src/utils";
 
 const store = useStore();
+const chatStore = useChatStore();
+
+// Charger les vraies conversations depuis le backend au montage
+onMounted(() => {
+  chatStore.loadConversations();
+});
 </script>
 
 <template>
