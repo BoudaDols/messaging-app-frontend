@@ -59,6 +59,27 @@ export function sendMessage(
 }
 
 /**
+ * Émet un événement "typing_start"
+ */
+export function emitTypingStart(conversationId: string) {
+	socket?.emit("typing_start", { conversationId });
+}
+
+/**
+ * Émet un événement "typing_stop"
+ */
+export function emitTypingStop(conversationId: string) {
+	socket?.emit("typing_stop", { conversationId });
+}
+
+/**
+ * Marque des messages comme lus
+ */
+export function emitMessageRead(messageIds: string[]) {
+	socket?.emit("message_read", { messageIds });
+}
+
+/**
  * Déconnecte le socket
  */
 export function disconnectSocket() {

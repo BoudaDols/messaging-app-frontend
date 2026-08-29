@@ -4,7 +4,13 @@ import { useRoute } from "vue-router";
 
 import useChatStore from "@src/store/chat";
 import useAuthStore from "@src/store/auth";
-import { getSocket, sendMessage } from "@src/services/socket";
+import {
+  getSocket,
+  sendMessage,
+  emitTypingStart,
+  emitTypingStop,
+  emitMessageRead,
+} from "@src/services/socket";
 import type { ApiMessage } from "@src/services/conversationService";
 
 import NoChatSelected from "@src/components/states/empty-states/NoChatSelected.vue";
@@ -15,6 +21,13 @@ const authStore = useAuthStore();
 
 const messageInput = ref("");
 const messagesContainer = ref<HTMLElement | null>(null);
+
+// L'autre participant est-il en train d'écrire ?
+const otherIsTyping = ref(false);
+
+// Timers pour le débounce du typing
+let typingTimer: ReturnType<typeof setTimeout> | null = null;
+let isTypingActive = false;
 
 // ID de la conversation active (depuis l'URL)
 const conversationId = computed(() => route.params.id as string | undefined);
@@ -55,9 +68,13 @@ const scrollToBottom = () => {
 watch(
   conversationId,
   (id) => {
+    otherIsTyping.value = false;
     if (id) {
       chatStore.setActiveConversation(id);
-      chatStore.loadMessages(id).then(scrollToBottom);
+      chatStore.loadMessages(id).then(() => {
+        scrollToBottom();
+        markConversationAsRead();
+      });
     }
   },
   { immediate: true },
@@ -66,6 +83,24 @@ watch(
 // Défiler quand de nouveaux messages arrivent
 watch(messages, scrollToBottom, { deep: true });
 
+// Gérer la frappe (débounce : émettre typing_start une fois, puis typing_stop après 3s d'inactivité)
+const handleTyping = () => {
+  if (!conversationId.value) return;
+
+  // Émettre typing_start seulement si pas déjà actif
+  if (!isTypingActive) {
+    emitTypingStart(conversationId.value);
+    isTypingActive = true;
+  }
+
+  // Réinitialiser le timer d'arrêt
+  if (typingTimer) clearTimeout(typingTimer);
+  typingTimer = setTimeout(() => {
+    if (conversationId.value) emitTypingStop(conversationId.value);
+    isTypingActive = false;
+  }, 3000);
+};
+
 // Envoyer un message
 const handleSend = async () => {
   const content = messageInput.value.trim();
@@ -73,6 +108,13 @@ const handleSend = async () => {
 
   const recipientId = activeConversation.value.participant.id;
   messageInput.value = "";
+
+  // Arrêter l'indicateur de frappe
+  if (typingTimer) clearTimeout(typingTimer);
+  if (isTypingActive && conversationId.value) {
+    emitTypingStop(conversationId.value);
+    isTypingActive = false;
+  }
 
   const ack = await sendMessage(recipientId, content);
   if (ack.success) {
@@ -90,12 +132,74 @@ const handleSend = async () => {
 const handleNewMessage = (message: ApiMessage) => {
   chatStore.addMessage(message);
   scrollToBottom();
+
+  // Marquer immédiatement comme lu si la conversation est ouverte
+  if (message.conversationId === conversationId.value) {
+    emitMessageRead([message._id]);
+  }
+};
+
+// Écouter les changements de statut de frappe
+const handleTypingStatus = (status: {
+  conversationId: string;
+  userId: string;
+  isTyping: boolean;
+}) => {
+  // Ne montrer que pour la conversation active et pas soi-même
+  if (
+    status.conversationId === conversationId.value &&
+    status.userId !== currentUserId.value
+  ) {
+    otherIsTyping.value = status.isTyping;
+  }
+};
+
+// Marquer tous les messages non lus de la conversation comme lus
+const markConversationAsRead = () => {
+  const unreadIds = messages.value
+    .filter((m) => !isOwnMessage(m) && !m.readStatus?.isRead)
+    .map((m) => m._id);
+  if (unreadIds.length > 0) {
+    emitMessageRead(unreadIds);
+  }
+};
+
+// Écouter les accusés de lecture — mettre à jour les messages concernés
+const handleReadReceipt = (receipt: { messageIds: string[] }) => {
+  if (!conversationId.value) return;
+  const convMessages = chatStore.messages[conversationId.value];
+  if (!convMessages) return;
+
+  for (const msg of convMessages) {
+    if (receipt.messageIds.includes(msg._id)) {
+      msg.readStatus = { isRead: true, readAt: new Date().toISOString() };
+    }
+  }
+};
+
+// Écouter les changements de présence — mettre à jour le participant
+const handlePresenceChange = (data: {
+  userId: string;
+  status: string;
+  lastSeen: string | null;
+}) => {
+  for (const conv of chatStore.conversations) {
+    if (conv.participant?.id === data.userId) {
+      conv.participant.presence = {
+        status: data.status,
+        lastSeen: data.lastSeen || "",
+      };
+    }
+  }
 };
 
 onMounted(() => {
   const socket = getSocket();
   if (socket) {
     socket.on("new_message", handleNewMessage);
+    socket.on("typing_status", handleTypingStatus);
+    socket.on("read_receipt", handleReadReceipt);
+    socket.on("presence_change", handlePresenceChange);
   }
 });
 
@@ -103,7 +207,11 @@ onUnmounted(() => {
   const socket = getSocket();
   if (socket) {
     socket.off("new_message", handleNewMessage);
+    socket.off("typing_status", handleTypingStatus);
+    socket.off("read_receipt", handleReadReceipt);
+    socket.off("presence_change", handlePresenceChange);
   }
+  if (typingTimer) clearTimeout(typingTimer);
 });
 
 // Formater l'heure d'un message
@@ -133,9 +241,20 @@ const formatTime = (dateStr: string) => {
         <p class="heading-2 text-black/70 dark:text-white/70">
           {{ activeConversation.participant?.displayName }}
         </p>
-        <p class="body-1 text-black/50 dark:text-white/50">
-          {{ activeConversation.participant?.presence?.status }}
-        </p>
+        <!--Statut de présence-->
+        <div class="flex items-center">
+          <span
+            class="w-2 h-2 rounded-full mr-2"
+            :class="
+              activeConversation.participant?.presence?.status === 'online'
+                ? 'bg-green-500'
+                : 'bg-gray-400'
+            "
+          ></span>
+          <p class="body-1 text-black/50 dark:text-white/50">
+            {{ activeConversation.participant?.presence?.status === 'online' ? 'online' : 'offline' }}
+          </p>
+        </div>
       </div>
     </div>
 
@@ -159,11 +278,30 @@ const formatTime = (dateStr: string) => {
           "
         >
           <p class="body-2">{{ message.content }}</p>
-          <p
-            class="body-1 mt-1"
-            :class="isOwnMessage(message) ? 'text-white/70' : 'text-black/50 dark:text-white/50'"
-          >
-            {{ formatTime(message.createdAt) }}
+          <div class="flex items-center justify-end mt-1">
+            <p
+              class="body-1"
+              :class="isOwnMessage(message) ? 'text-white/70' : 'text-black/50 dark:text-white/50'"
+            >
+              {{ formatTime(message.createdAt) }}
+            </p>
+            <!--Accusé de lecture (seulement pour nos messages)-->
+            <span
+              v-if="isOwnMessage(message)"
+              class="ml-2 text-xs"
+              :class="message.readStatus?.isRead ? 'text-blue-200' : 'text-white/50'"
+            >
+              {{ message.readStatus?.isRead ? '✓✓' : '✓' }}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!--Indicateur de frappe-->
+      <div v-if="otherIsTyping" class="mb-4 flex justify-start">
+        <div class="px-4 py-3 rounded-lg bg-gray-100 dark:bg-gray-700">
+          <p class="body-2 text-black/50 dark:text-white/50 italic">
+            {{ activeConversation.participant?.displayName }} is typing...
           </p>
         </div>
       </div>
@@ -174,6 +312,7 @@ const formatTime = (dateStr: string) => {
       <form @submit.prevent="handleSend" class="flex items-center">
         <input
           v-model="messageInput"
+          @input="handleTyping"
           type="text"
           placeholder="Type a message..."
           class="grow px-4 py-3 rounded-lg bg-gray-50 dark:bg-gray-700 text-black/70 dark:text-white/70 outline-none"
